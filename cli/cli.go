@@ -167,7 +167,7 @@ func makeFolder(d *gdrive.Drive, title string, parentId string, share bool) (*dr
 }
 
 // Upload file to drive
-func UploadStdin(d *gdrive.Drive, input io.ReadCloser, title string, parentId string, share bool, mimeType string, convert bool) error {
+func UploadStdin(d *gdrive.Drive, input *os.File, title string, parentId string, share bool, mimeType string, convert bool, inputLength int64) error {
 	// File instance
 	f := &drive.File{Title: title}
 	// Set parent (if provided)
@@ -181,7 +181,22 @@ func UploadStdin(d *gdrive.Drive, input io.ReadCloser, title string, parentId st
 		fmt.Printf("Converting to Google Docs format enabled\n")
 	}
 
-	info, err := d.Files.Insert(f).Convert(convert).Media(input).Do()
+	// If length of stdin buffer was given, start a resumable upload
+	var info *drive.File
+	var err error
+	if inputLength > 0 {
+		if mimeType != "" {
+			fmt.Printf("Resumable uploads via stdin will ignore your custom mime type and use 'application/octet-stream' instead")
+		}
+
+		pipe := util.NewSeekablePipe(input)
+		info, err = d.Files.Insert(f).Convert(convert).ResumableMedia(context.Background(), pipe, inputLength, "application/octet-stream").Do()
+	} else {
+		fmt.Printf("No stdin buffer length specified - your upload is going to be non-resumable and might fail if it takes too long!\n")
+		info, err = d.Files.Insert(f).Convert(convert).Media(input).Do()
+	}
+
+	// Check if upload was successful
 	if err != nil {
 		return fmt.Errorf("An error occurred uploading the document: %v\n", err)
 	}
